@@ -2,7 +2,7 @@ name: HidenCloud Auto Renew (Multi-Account)
 
 on:
   schedule:
-    - cron: '0 18 * * *'   # 每天的 UTC 18:00 运行
+    - cron: '0 1 * * *'   # 每天的 UTC 1:00 运行
   workflow_dispatch:
 
 jobs:
