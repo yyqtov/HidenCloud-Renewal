@@ -1,8 +1,8 @@
-name: HidenCloud Auto Renew
+name: HidenCloud Auto Renew (Multi-Account)
 
 on:
   schedule:
-    - cron: '0 18 * * *'  # 每天 UTC 18:00，可按需调整
+    - cron: '0 1 */5 * *'  # 每5天的 UTC 18:00 运行
   workflow_dispatch:
 
 jobs:
@@ -22,15 +22,14 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install playwright
+        pip install playwright requests
         playwright install chromium
 
     - name: Run auto renewal
       env:
-        REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
-        HIDEN_EMAIL: ${{ secrets.HIDEN_EMAIL }}
-        HIDEN_PASSWORD: ${{ secrets.HIDEN_PASSWORD }}
-        HIDEN_SERVICE_URL: ${{ secrets.HIDEN_SERVICE_URL }}
+        ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python main.py
 
     - name: Commit README file
