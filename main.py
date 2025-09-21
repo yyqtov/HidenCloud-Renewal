@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HidenCloud 自动续期 / 签到脚本 - 多账号版本
+HidenCloud 自动续期 / 签到脚本 - 多账号版本 (带TG通知)
 """
 
 import os
 import sys
 import time
 import json
+import requests
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright, TimeoutError
 
@@ -157,18 +158,76 @@ def generate_readme(all_results):
     print("📝 README 已更新")
 
 
+# VVVV 新增的函数 VVVV
+def send_telegram_notification(all_results):
+    """发送Telegram通知"""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+
+    if not token or not chat_id:
+        print("未配置Telegram Bot Token或Chat ID，跳过通知。")
+        return
+
+    # 格式化消息内容
+    beijing_time = datetime.now(timezone(timedelta(hours=8)))
+    timestamp = beijing_time.strftime('%Y-%m-%d %H:%M:%S')
+    
+    status_messages = {
+        "success": "✅ 续期成功",
+        "already_renewed_or_missing": "⚠️ 已续期或按钮未找到",
+        "click_error": "💥 点击按钮出错",
+        "login_failed": "❌ 登录失败",
+        "error: no_service_url": "❌ 未设置服务URL"
+    }
+    
+    message = f"**HidenCloud 续期报告**\n\n*报告时间: {timestamp} (北京时间)*\n\n"
+    
+    for account_result in all_results:
+        email = account_result['identifier']
+        status_list = account_result['status']
+        message += f"**账号: `{email}`**\n"
+        if not status_list:
+            message += "- 🤷‍♀️ 未知状态\n"
+        for result in status_list:
+             message += f"- {status_messages.get(result, f'❓ 未知状态 ({result})')}\n"
+        message += "\n" # 每个账号后加一个换行
+
+    # 发送请求
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        'chat_id': chat_id,
+        'text': message,
+        'parse_mode': 'Markdown'
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            print("✅ Telegram 通知发送成功。")
+        else:
+            print(f"❌ Telegram 通知发送失败: {response.text}")
+    except Exception as e:
+        print(f"❌ 发送 Telegram 通知时发生错误: {e}")
+
+# ^^^^ 新增的函数 ^^^^
+
+
 def main():
+    # ... [这部分 main 函数代码和之前基本一样] ...
     accounts_json = os.environ.get("ACCOUNTS_JSON")
     if not accounts_json:
         print("::error::错误：ACCOUNTS_JSON 这个 Secret 未设置。")
-        generate_readme([{'identifier': '所有账号', 'status': ['❌ 未设置ACCOUNTS_JSON']}])
+        result_for_failure = [{'identifier': '所有账号', 'status': ['❌ 未设置ACCOUNTS_JSON']}]
+        generate_readme(result_for_failure)
+        send_telegram_notification(result_for_failure) # <--- 新增
         sys.exit(1)
 
     try:
         accounts = json.loads(accounts_json)
     except json.JSONDecodeError:
         print("::error::错误：ACCOUNTS_JSON 的格式不正确，请检查。")
-        generate_readme([{'identifier': '所有账号', 'status': ['❌ ACCOUNTS_JSON格式错误']}])
+        result_for_failure = [{'identifier': '所有账号', 'status': ['❌ ACCOUNTS_JSON格式错误']}]
+        generate_readme(result_for_failure)
+        send_telegram_notification(result_for_failure) # <--- 新增
         sys.exit(1)
 
     print(f"检测到 {len(accounts)} 个账号，开始处理...")
@@ -192,8 +251,8 @@ def main():
             all_results.append({'identifier': identifier, 'status': [f'💥 未知错误: {e}']})
     
     generate_readme(all_results)
+    send_telegram_notification(all_results) # <--- 新增：在最后发送通知
     
-    # 如果任何一个账号失败，则 workflow 失败
     if any("login_failed" in r['status'] or "error" in str(r['status']) for r in all_results):
         sys.exit(1)
 
