@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HidenCloud 自动续期 / 签到脚本 - 多账号版本 (带TG通知)
+HidenCloud 自动续期 / 签到脚本 - 多账号版本 (带智能TG通知和代理支持)
 """
 
 import os
@@ -21,8 +21,11 @@ class HidenCloudSignIn:
         self.email = account.get('email', '')
         self.password = account.get('password', '')
         self.headless = os.getenv('HEADLESS', 'true').lower() == 'true'
-        # 使用 email 作为账号的唯一标识
         self.identifier = self.email if self.email else f"Cookie用户 (URL: {self.service_url})"
+        ### VVVV 修改处 VVVV ###
+        # 新增：从账号信息中获取代理设置
+        self.proxy = account.get('proxy')
+        ### ^^^^ 修改处 ^^^^ ###
 
     def log(self, message, level="INFO"):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -37,7 +40,6 @@ class HidenCloudSignIn:
     def login_with_cookie(self, context):
         try:
             self.log(f"账号 [{self.identifier}] 尝试使用 REMEMBER_WEB_COOKIE 登录...")
-            # 注意: 此处 cookie name 和 domain 可能需要根据实际情况调整
             cookie = {
                 'name': 'remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d',
                 'value': self.remember_web_cookie,
@@ -78,7 +80,13 @@ class HidenCloudSignIn:
             return ["error: no_service_url"]
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=self.headless)
+            if self.proxy:
+                self.log(f"账号 [{self.identifier}] 检测到代理设置，将通过代理连接...")
+            browser = p.chromium.launch(
+                headless=self.headless,
+                proxy={'server': self.proxy} if self.proxy else None
+            )
+            
             context = browser.new_context()
             page = context.new_page()
             login_success = False
@@ -141,9 +149,7 @@ def generate_readme(all_results):
         "login_failed": "❌ 登录失败",
         "error: no_service_url": "❌ 未设置服务URL"
     }
-
     readme_content = f"# HidenCloud 自动续期脚本\n\n**最后运行时间**: `{timestamp}` (北京时间)\n\n## 运行结果\n\n"
-    
     for account_result in all_results:
         email = account_result['identifier']
         status_list = account_result['status']
@@ -152,15 +158,13 @@ def generate_readme(all_results):
             readme_content += "- 🤷‍♀️ 未知状态\n"
         for result in status_list:
              readme_content += f"- {status_messages.get(result, f'❓ 未知状态 ({result})')}\n"
-    
     with open("README.md", "w", encoding="utf-8") as f:
         f.write(readme_content)
     print("📝 README 已更新")
 
 
-# VVVV 新增的函数 VVVV
-def send_telegram_notification(all_results):
-    """发送Telegram通知"""
+def send_telegram_notification(all_results, silent=False):
+    """发送Telegram通知 (支持静音)"""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -168,7 +172,6 @@ def send_telegram_notification(all_results):
         print("未配置Telegram Bot Token或Chat ID，跳过通知。")
         return
 
-    # 格式化消息内容
     beijing_time = datetime.now(timezone(timedelta(hours=8)))
     timestamp = beijing_time.strftime('%Y-%m-%d %H:%M:%S')
     
@@ -180,7 +183,8 @@ def send_telegram_notification(all_results):
         "error: no_service_url": "❌ 未设置服务URL"
     }
     
-    message = f"**HidenCloud 续期报告**\n\n*报告时间: {timestamp} (北京时间)*\n\n"
+    title = "HidenCloud 续期心跳" if silent else "HidenCloud 续期提醒"
+    message = f"**{title}**\n\n*报告时间: {timestamp} (北京时间)*\n\n"
     
     for account_result in all_results:
         email = account_result['identifier']
@@ -190,35 +194,32 @@ def send_telegram_notification(all_results):
             message += "- 🤷‍♀️ 未知状态\n"
         for result in status_list:
              message += f"- {status_messages.get(result, f'❓ 未知状态 ({result})')}\n"
-        message += "\n" # 每个账号后加一个换行
+        message += "\n"
 
-    # 发送请求
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         'chat_id': chat_id,
         'text': message,
-        'parse_mode': 'Markdown'
+        'parse_mode': 'Markdown',
+        'disable_notification': silent
     }
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
-            print("✅ Telegram 通知发送成功。")
+            print(f"✅ Telegram {'静音' if silent else '响铃'}通知发送成功。")
         else:
             print(f"❌ Telegram 通知发送失败: {response.text}")
     except Exception as e:
         print(f"❌ 发送 Telegram 通知时发生错误: {e}")
 
-# ^^^^ 新增的函数 ^^^^
-
 
 def main():
-    # ... [这部分 main 函数代码和之前基本一样] ...
     accounts_json = os.environ.get("ACCOUNTS_JSON")
     if not accounts_json:
         print("::error::错误：ACCOUNTS_JSON 这个 Secret 未设置。")
         result_for_failure = [{'identifier': '所有账号', 'status': ['❌ 未设置ACCOUNTS_JSON']}]
         generate_readme(result_for_failure)
-        send_telegram_notification(result_for_failure) # <--- 新增
+        send_telegram_notification(result_for_failure, silent=False)
         sys.exit(1)
 
     try:
@@ -227,7 +228,7 @@ def main():
         print("::error::错误：ACCOUNTS_JSON 的格式不正确，请检查。")
         result_for_failure = [{'identifier': '所有账号', 'status': ['❌ ACCOUNTS_JSON格式错误']}]
         generate_readme(result_for_failure)
-        send_telegram_notification(result_for_failure) # <--- 新增
+        send_telegram_notification(result_for_failure, silent=False)
         sys.exit(1)
 
     print(f"检测到 {len(accounts)} 个账号，开始处理...")
@@ -251,7 +252,19 @@ def main():
             all_results.append({'identifier': identifier, 'status': [f'💥 未知错误: {e}']})
     
     generate_readme(all_results)
-    send_telegram_notification(all_results) # <--- 新增：在最后发送通知
+    
+    has_important_event = False
+    for res in all_results:
+        if not all(s == "already_renewed_or_missing" for s in res['status']):
+            has_important_event = True
+            break
+            
+    if has_important_event:
+        print("检测到重要事件（成功或失败），发送响铃通知。")
+        send_telegram_notification(all_results, silent=False)
+    else:
+        print("所有账号均无需操作，发送静音通知。")
+        send_telegram_notification(all_results, silent=True)
     
     if any("login_failed" in r['status'] or "error" in str(r['status']) for r in all_results):
         sys.exit(1)
