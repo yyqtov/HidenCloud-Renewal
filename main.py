@@ -10,6 +10,7 @@ import time
 import json
 import requests
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, TimeoutError
 
 
@@ -22,10 +23,23 @@ class HidenCloudSignIn:
         self.password = account.get('password', '')
         self.headless = os.getenv('HEADLESS', 'true').lower() == 'true'
         self.identifier = self.email if self.email else f"Cookie用户 (URL: {self.service_url})"
-        ### VVVV 修改处 VVVV ###
-        # 新增：从账号信息中获取代理设置
-        self.proxy = account.get('proxy')
-        ### ^^^^ 修改处 ^^^^ ###
+
+        # 代理处理
+        raw_proxy = account.get('proxy')
+        self.proxy = None
+        if raw_proxy:
+            try:
+                parsed = urlparse(raw_proxy)
+                self.proxy = {
+                    "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+                }
+                if parsed.username:
+                    self.proxy["username"] = parsed.username
+                if parsed.password:
+                    self.proxy["password"] = parsed.password
+            except Exception as e:
+                print(f"⚠️ 代理地址解析失败: {raw_proxy} ({e})")
+                self.proxy = None
 
     def log(self, message, level="INFO"):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -80,14 +94,13 @@ class HidenCloudSignIn:
             return ["error: no_service_url"]
 
         with sync_playwright() as p:
+            self.log(f"账号 [{self.identifier}] 启动浏览器...")
+            browser = p.chromium.launch(headless=self.headless)
+
+            context = browser.new_context(proxy=self.proxy) if self.proxy else browser.new_context()
             if self.proxy:
-                self.log(f"账号 [{self.identifier}] 检测到代理设置，将通过代理连接...")
-            browser = p.chromium.launch(
-                headless=self.headless,
-                proxy={'server': self.proxy} if self.proxy else None
-            )
-            
-            context = browser.new_context()
+                self.log(f"账号 [{self.identifier}] 使用代理: {self.proxy}")
+
             page = context.new_page()
             login_success = False
 
@@ -135,7 +148,7 @@ class HidenCloudSignIn:
                 results.append("click_error")
 
             browser.close()
-        
+
         return results
 
 
